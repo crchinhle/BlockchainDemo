@@ -1,0 +1,16 @@
+{
+  "name": "@emukey/contracts",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "hardhat compile"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-ignition": "3.1.8",
+    "@nomicfoundation/hardhat-ignition-viem": "3.1.6",
+    "@nomicfoundation/hardhat-toolbox-viem": "5.0.7",
+    "@openzeppelin/contracts": "5.6.1",
+    "hardhat": "3.15.0",
+    "viem": "2.56.3"
+  }
+}

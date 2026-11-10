@@ -1,0 +1,35 @@
+name: emukey-research-lab
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: research
+      POSTGRES_PASSWORD: local-research-only
+      POSTGRES_DB: emukey_research
+    ports: ["127.0.0.1:55432:5432"]
+    volumes:
+      - research-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U research -d emukey_research"]
+      interval: 2s
+      retries: 20
+  database-initialize:
+    image: postgres:15-alpine
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: local-research-only
+    volumes:
+      - ./backend/database/research.sql:/schema/research.sql:ro
+    entrypoint: ["psql"]
+    command: ["--host=postgres", "--username=research", "--dbname=emukey_research", "--set=ON_ERROR_STOP=1", "--single-transaction", "--file=/schema/research.sql"]
+    restart: "no"
+  redis:
+    image: redis:8.2-alpine
+    ports: ["127.0.0.1:56379:6379"]
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes: ["research-redis:/data"]
+volumes:
+  research-pg:
+  research-redis:
