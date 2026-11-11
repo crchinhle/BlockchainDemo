@@ -1,5 +1,7 @@
 # Verification — 2026-11-10
 
+The historical tables below describe v1. New model v2 verification is recorded in [verification-v2.md](verification-v2.md), with requirements and limitations in [model-v2.md](model-v2.md). No historical evidence is relabeled as v2.
+
 This is a runnable research-local vertical slice, with remaining scope explicitly listed in model-alignment.md. No mainnet, Sepolia, commercial API, source database or paid service used. Tests below actually executed on Windows, Node 22.21.0, Docker Desktop Linux containers, PostgreSQL 15, Redis 8.2 and real Hardhat EVM 31337.
 
 ## Executed checks

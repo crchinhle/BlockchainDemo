@@ -29,7 +29,6 @@ import {
   db,
   redis,
   initialize,
-  ResearchChain,
   json,
   digest,
 } from '../../modules/research/infrastructure.js';
@@ -40,12 +39,16 @@ import {
   type Config,
 } from '../../modules/research/domain.js';
 import {
-  runExperiment,
   dataset,
   freezeArtifact,
 } from '../../modules/research/runner.js';
 
-const chain = new ResearchChain();
+import { ChainV2 } from '../../modules/research/protocol-v2.js';
+import { HttpBenchmark, type BenchmarkConfig } from '../../modules/research/http-benchmark.js';
+import type { Address, Hex } from 'viem';
+const httpBenchmark=new HttpBenchmark();
+import { runExperimentV2, reconcileV2 } from '../../modules/research/runner-v2.js';
+const chain = new ChainV2();
 const connection = {
   host: process.env.RESEARCH_REDIS_HOST ?? '127.0.0.1',
   port: Number(process.env.RESEARCH_REDIS_PORT ?? 56379),
@@ -79,7 +82,7 @@ async function own(req: Request, id: string) {
   if (!r.rows[0]) fail(404, 'Không tìm thấy lượt chạy');
   return r.rows[0] as { id: string; state: string; config: Config };
 }
-async function preflight() {
+async function preflight(central = false) {
   const checks: { name: string; ok: boolean; detail: string }[] = [];
   for (const [name, fn] of [
     ['PostgreSQL', () => db.query('SELECT 1 FROM research.runs LIMIT 1')],
@@ -87,6 +90,7 @@ async function preflight() {
     [
       'EVM chainId / contract',
       async () => {
+        if (central) return;
         if (
           (await chain.rpc.getChainId()) !== 31337 ||
           !(await chain.rpc.getCode({ address: chain.address }))
@@ -97,22 +101,10 @@ async function preflight() {
     [
       'Signer balance / role',
       async () => {
+        if (central) return;
         if ((await chain.rpc.getBalance({ address: chain.signer })) === 0n)
           throw new Error('NO_BALANCE');
-        const role = await chain.rpc.readContract({
-          address: chain.address,
-          abi: chain.abi,
-          functionName: 'RELAYER_ROLE',
-        });
-        if (
-          !(await chain.rpc.readContract({
-            address: chain.address,
-            abi: chain.abi,
-            functionName: 'hasRole',
-            args: [role, chain.signer],
-          }))
-        )
-          throw new Error('NO_ROLE');
+        if ((await chain.rpc.readContract({address:chain.address,abi:chain.abi,functionName:'administrator'})) !== chain.signer) throw new Error('NO_ADMIN');
       },
     ],
     [
@@ -139,6 +131,12 @@ async function preflight() {
 
 @Controller('api/research')
 class ResearchController {
+  @Post('benchmarks') async benchmarkCreate(@Req() req:Request,@Body() body:BenchmarkConfig){return httpBenchmark.create((await actor(req)).username,body);}
+  @Post('benchmarks/:id/fixtures') async benchmarkFixture(@Req() req:Request,@Param('id') id:string,@Body() body:{key:Address}){return httpBenchmark.prepare(id,(await actor(req)).username,body.key);}
+  @Post('benchmarks/:id/request') async benchmarkRequest(@Req() req:Request,@Param('id') id:string,@Body() body:{index:number;operation:string;nonce?:string;signature?:Hex;token?:string}){return httpBenchmark.request(id,(await actor(req)).username,body);}
+  @Post('benchmarks/:id/revoke') async benchmarkRevoke(@Req() req:Request,@Param('id') id:string,@Body() body:{index:number}){return httpBenchmark.revoke(id,(await actor(req)).username,body.index);}
+  @Post('benchmarks/:id/finish') async benchmarkFinish(@Req() req:Request,@Param('id') id:string){return httpBenchmark.finish(id,(await actor(req)).username);}
+  @Get('benchmark-metrics') async benchmarkMetrics(@Req() req:Request){await actor(req);return httpBenchmark.metrics();}
   @Post('login') async login(
     @Body() body: { username?: string; password?: string },
     @Req() req: Request,
@@ -274,8 +272,8 @@ class ResearchController {
     @Req() req: Request,
     @Param('id') id: string,
   ) {
-    await own(req, id);
-    if (!(await preflight()).ok) fail(503, 'Môi trường chưa sẵn sàng');
+    const selected = await own(req, id);
+    if (!(await preflight(selected.config.strategy === 'CENTRALIZED')).ok) fail(503, 'Môi trường chưa sẵn sàng');
     const r = await db.query(
       "UPDATE research.runs SET state='QUEUED' WHERE id=$1 AND state='DRAFT' RETURNING id",
       [id],
@@ -446,7 +444,10 @@ class ResearchController {
     }
     const signatures = runs.map((r) => {
       const c = r.run.config as Config;
+      const manifest = r.run.manifest as Record<string, unknown>;
       return json({
+        modelVersion: manifest.modelVersion ?? 1,
+        measurementBoundary: manifest.measurementBoundary,
         seed: c.seed,
         rate: c.rate,
         devices: c.devices,
@@ -454,9 +455,8 @@ class ResearchController {
         clients: c.clients,
         concurrency: c.concurrency,
         observeMs: c.observeMs,
-        network: (r.run.manifest as Record<string, unknown>).network,
-        chainInstance: (r.run.manifest as Record<string, unknown>)
-          .chainInstance,
+        network: manifest.modelVersion === 2 ? 'research-local-v2' : manifest.network,
+        chainInstance: manifest.modelVersion === 2 ? undefined : manifest.chainInstance,
         codeHash: (r.run.manifest as Record<string, unknown>).codeHash,
         warmupMs: c.warmupMs,
         revokeAfterMs: c.revokeAfterMs,
@@ -467,9 +467,10 @@ class ResearchController {
     });
     const compatible =
       signatures.every((s) => s === signatures[0]) &&
+      new Set(runs.map(r=>(r.run.manifest as Record<string,unknown>).chainInstance).filter(Boolean)).size <= 1 &&
       runs.every(
         (r) =>
-          Boolean((r.run.manifest as Record<string, unknown>).chainInstance) &&
+          (Boolean((r.run.manifest as Record<string, unknown>).chainInstance) || (r.run.manifest as Record<string, unknown>).modelVersion === 2) &&
           r.run.state === 'COMPLETED',
       );
     return {
@@ -508,8 +509,8 @@ if (process.argv.includes('--setup')) {
   );
   if (!held.rows[0]?.locked) throw new Error('RESEARCH_WORKER_ALREADY_RUNNING');
   lease.on('error', () => process.exit(1));
-  await chain.init();
-  await chain.reconcile();
+  await chain.init().catch(() => undefined); // Centralized remains available without EVM.
+  await reconcileV2(chain);
   const interrupted = await db.query<{ id: string }>(
     "UPDATE research.runs SET state='INTERRUPTED',error='Worker restarted; timeline invalid for analysis' WHERE state IN ('PREPARING','WARMING','RUNNING','REVOKING','OBSERVING') RETURNING id",
   );
@@ -523,7 +524,7 @@ if (process.argv.includes('--setup')) {
   const worker = new Worker(
     'research-runs',
     async (job) => {
-      await runExperiment((job.data as { id: string }).id, chain);
+      await runExperimentV2((job.data as { id: string }).id, chain);
     },
     { connection, concurrency: 1, maxStalledCount: 0 },
   );
@@ -542,11 +543,12 @@ if (process.argv.includes('--setup')) {
             { jobId: row.id, attempts: 1 },
           );
       });
-    void chain.reconcile();
+    void reconcileV2(chain);
   }, 1000);
   console.log('Research worker ready');
 } else {
-  await chain.init();
+  await db.query("UPDATE research.http_benchmarks SET state='INTERRUPTED' WHERE state='PREPARING'");
+  await chain.init().catch(() => undefined); // Centralized remains available without EVM.
   const credential = JSON.parse(
     await readFile('.research-local/login.json', 'utf8'),
   ) as { password: string };

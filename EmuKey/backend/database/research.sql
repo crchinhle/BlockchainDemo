@@ -11,3 +11,11 @@ CREATE TABLE IF NOT EXISTS research.settings(key text PRIMARY KEY,value jsonb NO
 CREATE TABLE IF NOT EXISTS research.artifacts(run_id uuid PRIMARY KEY REFERENCES research.runs,data jsonb NOT NULL,checksum text NOT NULL,created_at timestamptz NOT NULL DEFAULT now());
 CREATE INDEX IF NOT EXISTS samples_run ON research.samples(run_id,id);
 CREATE INDEX IF NOT EXISTS events_run ON research.events(run_id,id);
+-- Versioned authority: never rewrite legacy experimental evidence.
+CREATE TABLE IF NOT EXISTS research.v2_licenses(id uuid PRIMARY KEY,data jsonb NOT NULL);
+CREATE TABLE IF NOT EXISTS research.v2_devices(license_id uuid NOT NULL REFERENCES research.v2_licenses,generation int NOT NULL,device text NOT NULL,PRIMARY KEY(license_id,generation,device));
+CREATE TABLE IF NOT EXISTS research.v2_requests(key text PRIMARY KEY,payload text NOT NULL,version int NOT NULL);
+CREATE TABLE IF NOT EXISTS research.v2_products(id uuid PRIMARY KEY,issuer text NOT NULL);
+CREATE TABLE IF NOT EXISTS research.v2_commands(id uuid PRIMARY KEY,run_id uuid NOT NULL REFERENCES research.runs,contract text NOT NULL,actor text NOT NULL,operation text NOT NULL,payload jsonb NOT NULL,state text NOT NULL,hash text,receipt jsonb);
+CREATE TABLE IF NOT EXISTS research.http_benchmarks(id uuid PRIMARY KEY,owner text NOT NULL,state text NOT NULL,manifest jsonb NOT NULL,created_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE IF NOT EXISTS research.http_benchmark_events(id bigserial PRIMARY KEY,session_id uuid NOT NULL REFERENCES research.http_benchmarks,kind text NOT NULL,data jsonb NOT NULL,at timestamptz NOT NULL DEFAULT now());

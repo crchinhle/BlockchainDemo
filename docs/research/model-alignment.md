@@ -1,5 +1,7 @@
 # Model alignment
 
+**Version notice (2026-11-10):** the table below is the retained v1 boundary at commit `30f604a`. The active research entrypoint now uses model v2. See [the v2 requirement matrix, architecture, tests and explicit remaining gaps](model-v2.md). Do not apply v1 measurements or the following historical implementation descriptions to v2.
+
 The supplied prompt is the research specification. No external paper/Google Doc was available or modified.
 
 | Requirement | Implemented boundary / limitation |

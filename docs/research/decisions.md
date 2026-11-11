@@ -1,5 +1,9 @@
 # Research variant decisions
 
+## Model v2 superseding decisions — 2026-11-10
+
+The live NCKH Google Doc was accessible and read; it remains unchanged. New `ResearchLicenseRegistryV2` implements direct issuer/owner authorization, device membership, v/g and terminal revocation. It coexists with the original registry. The active entrypoint selects `runner-v2`; the old runner remains a historical implementation and export utility. Versioned tables preserve prior results. Centralized now commits independently of Blockchain; its reference is commit acknowledgement. Tokens use ES256. Complete rationale, requirement matrix and measured limits are in [model-v2.md](model-v2.md). Earlier numbered decisions below describe historical choices unless explicitly still applicable.
+
 1. User explicitly requests an independent variant. New runtime remains under EmuKey, using existing packages, original contract and platform crypto/connection providers. No ORM/framework replacement. Original commerce/provider guards untouched.
 2. A separate `research` module/schema and entrypoint avoid loading credential-heavy commercial integrations. The original schema and application remain reference source. NODE_ENV=test is never used to claim real integration.
 3. Local host processes for Hardhat/API/worker/Vite, Docker Compose for dedicated PostgreSQL/Redis. Only loopback exposed. Same Node/pnpm versions and frozen lockfiles; no paid service or mainnet path.

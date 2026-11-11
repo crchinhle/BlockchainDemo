@@ -286,23 +286,7 @@ export class ResearchChain {
     });
   }
   async fingerprint() {
-    const files = (await readdir('src/modules/research'))
-      .filter((f) => f.endsWith('.ts'))
-      .sort();
-    const codeHash = digest(
-      await Promise.all(
-        [
-          ...files.map((f) => 'src/modules/research/' + f),
-          'src/entrypoints/research/main.ts',
-          'database/research.sql',
-        ].map(async (path) => ({
-          path,
-          hash: createHash('sha256')
-            .update(await readFile(path))
-            .digest('hex'),
-        })),
-      ),
-    );
+    const codeHash = await runtimeCodeHash();
     return {
       codeHash,
       appCommit: null,
@@ -323,4 +307,24 @@ export class ResearchChain {
       mock: false,
     };
   }
+}
+
+export async function runtimeCodeHash() {
+    const files = (await readdir('src/modules/research'))
+      .filter((f) => f.endsWith('.ts'))
+      .sort();
+    return digest(
+      await Promise.all(
+        [
+          ...files.map((f) => 'src/modules/research/' + f),
+          'src/entrypoints/research/main.ts',
+          'database/research.sql',
+        ].map(async (path) => ({
+          path,
+          hash: createHash('sha256')
+            .update(await readFile(path))
+            .digest('hex'),
+        })),
+      ),
+    );
 }

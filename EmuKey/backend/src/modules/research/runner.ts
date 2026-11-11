@@ -549,7 +549,7 @@ export async function runExperiment(id: string, chain: ResearchChain) {
   }
 }
 export async function dataset(id: string) {
-  const run = await db.query('SELECT * FROM research.runs WHERE id=$1', [id]);
+  const run = await db.query<Record<string,unknown>>('SELECT * FROM research.runs WHERE id=$1', [id]);
   const reps = await db.query(
     'SELECT * FROM research.repetitions WHERE run_id=$1 ORDER BY ordinal',
     [id],
@@ -571,8 +571,11 @@ export async function dataset(id: string) {
     id: r.id,
     repetition_id: r.repetition_id,
   }));
+  const modelVersion = (run.rows[0]?.manifest as {modelVersion?:number} | undefined)?.modelVersion;
+  const commands = modelVersion === 2 ? (await db.query('SELECT id,actor,contract,operation,payload,state,hash,receipt FROM research.v2_commands WHERE run_id=$1 ORDER BY id',[id])).rows : undefined;
   return {
-    schemaVersion: 1,
+    schemaVersion: modelVersion === 2 ? 2 : 1,
+    ...(commands ? {commands} : {}),
     formulaVersion: 'observed-window-v1',
     run: run.rows[0] as Record<string, unknown>,
     repetitions: reps.rows as Record<string, unknown>[],

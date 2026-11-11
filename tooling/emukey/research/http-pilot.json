@@ -1,0 +1,16 @@
+{
+  "strategies": ["CENTRALIZED", "CENTRALIZED_CACHE", "DIRECT_ONCHAIN", "HYBRID"],
+  "licenses": 10,
+  "rate": 25,
+  "durationMs": 5000,
+  "warmupMs": 1000,
+  "cacheMs": 5000,
+  "tokenMs": 3000,
+  "concurrency": 32,
+  "timeoutMs": 10000,
+  "repetitions": 2,
+  "seed": 1001,
+  "distribution": "hot80",
+  "revokeAtMs": null,
+  "purpose": "pilot"
+}

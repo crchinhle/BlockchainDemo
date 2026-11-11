@@ -20,14 +20,14 @@ for(const config of [
 ]){
  const run=await (await call('/runs',config)).json();await call(`/runs/${run.id}/start`,{});await call(`/runs/${run.id}/start`,{},409);
  let data;for(let i=0;i<90;i++){data=await (await call(`/runs/${run.id}`)).json();if(['COMPLETED','FAILED','CANCELLED','INTERRUPTED'].includes(data.run.state))break;await new Promise(r=>setTimeout(r,500));}
- assert.equal(data.run.state,'COMPLETED',JSON.stringify(data.run));assert.ok(data.events.some(e=>e.kind==='issueLicense_included'));assert.ok(data.events.some(e=>e.kind==='activated'));assert.ok(data.events.some(e=>e.kind==='warmed'));assert.ok(data.events.some(e=>e.kind==='revokeLicense_included'));assert.ok(data.events.some(e=>e.kind==='confirmed'));
+ assert.equal(data.run.state,'COMPLETED',JSON.stringify(data.run));if(config.strategy!=='CENTRALIZED')assert.ok(data.events.some(e=>e.kind==='issue_included'));assert.ok(data.events.some(e=>e.kind==='activated'));assert.ok(data.events.some(e=>e.kind==='warmed'));if(config.strategy==='CENTRALIZED'){assert.ok(data.events.some(e=>e.kind==='central_committed'));assert.ok(!data.events.some(e=>e.kind==='revoke_broadcast'));}else{assert.ok(data.events.some(e=>e.kind==='revoke_included'));assert.ok(data.events.some(e=>e.kind==='confirmed'));}
  const tc=Number(data.repetitions[0].tc);assert.ok(data.samples.some(s=>s.decisionStartedAt>tc));assert.ok(data.samples.some(s=>s.decision==='ALLOW'));assert.ok(data.samples.some(s=>s.decision==='DENY'));
  if(config.eventMode==='dropped')assert.ok(data.summary.staleAccepts>0,'Fault experiment must expose stale token acceptance');
  if(config.fault==='rpc-outage')assert.ok(data.samples.some(s=>s.reason==='RPC_OUTAGE_INJECTED'));
- if(config.name==='Smoke final HYBRID')assert.equal(data.samples.filter(s=>s.decision==='ERROR').length,0);
+ if(config.name==='Smoke final HYBRID')assert.ok(data.samples.filter(s=>s.decision==='ERROR').every(s=>s.reason==='CACHE_EPOCH_CHANGED'),'Only the explicit invalidation race may degrade availability; keep it in samples');
  const exported=await (await call(`/runs/${run.id}/export?format=json`)).json();const {dataHash,createdAt,...dataset}=exported;assert.equal(createHash('sha256').update(canonical(dataset)).digest('hex'),dataHash);assert.equal(exported.samples.length,data.samples.length);assert.equal(JSON.stringify(exported).includes(creds.password),false);assert.equal(JSON.stringify(exported).includes('"token":'),false);
  const out=new URL('EmuKey/backend/.research-local/evidence/',root);await mkdir(out,{recursive:true});await writeFile(new URL(run.id+'.json',out),JSON.stringify(exported,null,2));
  const csv=await (await call(`/runs/${run.id}/export?format=samples.csv`)).text();assert.equal(csv.trim().split('\n').length,data.samples.length+1);
  results.push({id:run.id,name:config.name,samples:data.samples.length,summary:data.repetitions[0].summary});console.log(JSON.stringify(results.at(-1)));
 }
-console.log('HTTP integration: PASS',results.length,'real EVM runs');
+console.log('HTTP integration: PASS',results.length,'v2 integration runs');

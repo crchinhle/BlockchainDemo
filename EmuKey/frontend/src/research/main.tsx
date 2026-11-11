@@ -44,7 +44,7 @@ const smoke: Config = {
   name: 'Smoke',
   purpose: 'Kiểm tra luồng tích hợp thật',
   strategy: 'HYBRID',
-  variant: 'bounded-snapshot-v1',
+  variant: 'onchain-membership-v2',
   repetitions: 1,
   seed: 42,
   licenses: 1,
@@ -357,7 +357,7 @@ function Lab() {
                 : 'Phân tích'}
           </Text>
           <Space>
-            <Tag>bounded-snapshot-v1</Tag>
+            <Tag>onchain-membership-v2</Tag>
             <Button
               onClick={() =>
                 void act(async () => {
@@ -444,7 +444,7 @@ function Lab() {
                           value,
                           label:
                             value === 'DIRECT_ONCHAIN'
-                              ? 'DIRECT_ONCHAIN · trạng thái chain + thiết bị off-chain'
+                              ? 'DIRECT_ONCHAIN · quyền và thiết bị trên chuỗi'
                               : value,
                         }))}
                       />

@@ -2,7 +2,7 @@ export const defaults = {
   name: 'Smoke',
   purpose: 'Kiểm tra tích hợp, không phải kết luận nghiên cứu',
   strategy: 'HYBRID',
-  variant: 'bounded-snapshot-v1',
+  variant: 'onchain-membership-v2',
   repetitions: 1,
   seed: 42,
   licenses: 1,
@@ -74,7 +74,7 @@ export function validateConfig(input: Partial<Config>): Config {
   }
   if (
     !['CENTRALIZED', 'DIRECT_ONCHAIN', 'HYBRID'].includes(c.strategy) ||
-    c.variant !== 'bounded-snapshot-v1' ||
+    c.variant !== 'onchain-membership-v2' ||
     !['healthy', 'delayed', 'dropped'].includes(c.eventMode) ||
     !['none', 'rpc-outage', 'cache-race'].includes(c.fault)
   )
@@ -170,7 +170,7 @@ export function summarize(
     horizonMs: tc === null ? null : end - tc,
     resolutionMs: resolution,
     warnings: [
-      ...(lat.length < 100 ? ['P99 có dưới 100 mẫu; độ tin cậy thấp.'] : []),
+      ...(lat.length < 10000 ? ['P99 có dưới 10.000 mẫu; chỉ dùng mô tả, chưa ổn định phần đuôi.'] : []),
       ...(last === null
         ? [
             'Không quan sát thấy stale acceptance trong độ phân giải đã ghi; không khẳng định cửa sổ thật bằng 0.',
