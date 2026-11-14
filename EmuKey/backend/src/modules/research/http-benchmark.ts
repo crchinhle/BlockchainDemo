@@ -91,6 +91,13 @@ export class HttpBenchmark {
         boundary:
           'HTTP challenge + client signing + token issue + protected decision',
         config,
+        verifierTiming: {
+          configuredCacheMs: config.cacheMs,
+          snapshotFreshnessLimitMs: config.cacheMs,
+          effectiveCacheMs: central || config.strategy === 'HYBRID' ? config.cacheMs : null,
+          tokenMs: config.tokenMs,
+          deadlineRule: 'min(issueAnchor+tokenMs,snapshotReadStart+cacheMs,licenseExpiry)',
+        },
         codeHash: await runtimeCodeHash(),
         appCommit: execFileSync('git', ['rev-parse', 'HEAD'], {
           encoding: 'utf8',
@@ -213,6 +220,7 @@ export class HttpBenchmark {
       nonce?: string;
       signature?: Hex;
       token?: string;
+      correlationId?: string;
     },
   ) {
     const s = this.session(id, owner),
@@ -226,7 +234,11 @@ export class HttpBenchmark {
       !/^0x[0-9a-fA-F]{130}$/.test(body.signature)
     )
       throw new Error('INVALID_PROOF');
-    const metrics = { rpcCalls: 0, cacheHits: 0 };
+    const telemetry: Record<string, unknown> | undefined = process.env.RESEARCH_DECISION_TRACE === '1'
+      ? { correlationId: body.correlationId ?? null, operation: body.operation, stage: 'proof',
+          clock: 'server Date.now Unix milliseconds', snapshotObservedAtMs: null,
+          tokenIssuedAtMs: null, tokenDeadlineMs: null, tokenCheckedAtMs: null } : undefined;
+    const metrics = { rpcCalls: 0, cacheHits: 0, ...(telemetry ? { trace: telemetry } : {}) };
     return decisionMetrics.run(metrics, async () => {
       try {
         if (body.operation === 'issue') {
@@ -262,6 +274,12 @@ export class HttpBenchmark {
         };
       } catch (e) {
         const reason = e instanceof Error ? e.message : 'UNKNOWN';
+        if (telemetry) {
+          telemetry.decisionAtMs = Date.now();
+          telemetry.cause ??= reason === 'LICENSE_INACTIVE' || reason === 'TOKEN_INVALIDATED'
+            ? 'RIGHTS_INVALIDATED' : reason === 'PRODUCT_MISMATCH' ? 'BINDING_MISMATCH'
+              : /PROOF_|REPLAY/.test(reason) ? 'PROOF_REJECTED' : 'TECHNICAL_OR_UNCLASSIFIED';
+        }
         return {
           decision:
             /TOKEN_|LICENSE_|PRODUCT_|PROOF_|REPLAY|JWT|signature|exp.*claim/i.test(

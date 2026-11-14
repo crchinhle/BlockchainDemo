@@ -17,7 +17,13 @@ import { ResearchChain, db, redis, json, digest } from './infrastructure.js';
 export const decisionMetrics = new AsyncLocalStorage<{
   rpcCalls: number;
   cacheHits: number;
+  trace?: Record<string, unknown>;
 }>();
+// Optional in-memory decision telemetry. Never stores token material or keys.
+function trace(values: Record<string, unknown>) {
+  const target = decisionMetrics.getStore()?.trace;
+  if (target) Object.assign(target, values);
+}
 function countRpc() {
   const m = decisionMetrics.getStore();
   if (m) m.rpcCalls++;
@@ -358,6 +364,7 @@ export class VerifierV2 {
     }
   }
   allowed(s: SnapshotV2, product: string) {
+    trace({ stage: 'license-policy', snapshotObservedAtMs: s.observedAt });
     if (s.product.toLowerCase() !== uuidToBytes16(product).toLowerCase())
       throw new Error('PRODUCT_MISMATCH');
     if (
@@ -386,6 +393,7 @@ export class VerifierV2 {
         s.observedAt + this.cacheMs,
         s.expiresAt,
       );
+    trace({ stage: 'token-issue', snapshotObservedAtMs: s.observedAt, issuanceAnchorAtMs: now, tokenIssuedAtMs: null, tokenDeadlineMs: deadline });
     if (deadline <= now) throw new Error('SOURCE_STALE');
     const token = await new SignJWT({
       license,
@@ -407,6 +415,7 @@ export class VerifierV2 {
       .setIssuedAt(Math.floor(now / 1000))
       .setExpirationTime(Math.ceil(deadline / 1000))
       .sign((await this.keys).privateKey);
+    trace({ tokenIssuedAtMs: Date.now() });
     return { token, snapshot: s, deadline };
   }
   async verify(
@@ -420,12 +429,29 @@ export class VerifierV2 {
     if (await redis.exists(this.key(license) + ':unsafe'))
       throw new Error('REORG_UNSAFE');
     await this.proof(license, product, key, nonce, signature);
+    trace({ stage: 'jwt-validation', tokenCheckedAtMs: Date.now() });
     const { payload: p } = await jwtVerify(token, (await this.keys).publicKey, {
       algorithms: ['ES256'],
       issuer: this.domain,
       audience: 'research-protected-resource-v2',
+    }).catch((error: unknown) => {
+      const e = error as { code?: string; claim?: string };
+      trace({ jwtErrorCode: e.code ?? null, jwtErrorClaim: e.claim ?? null,
+        cause: e.code === 'ERR_JWT_EXPIRED' ? 'TOKEN_EXPIRED' : e.code === 'ERR_JWS_SIGNATURE_VERIFICATION_FAILED' ? 'SIGNATURE_INVALID' : 'JWT_VALIDATION_FAILED' });
+      throw error;
     });
     const device = deviceIdentity(license, key);
+    const checkedAt = Date.now();
+    const bindingMismatches = [
+      ['license', p.license !== license], ['product', p.product !== product],
+      ['device', p.device !== device], ['key', p.key !== key],
+      ['chainId', p.chainId !== 31337], ['contract', p.contract !== this.chain.address],
+      ['deadlineType', typeof p.deadline !== 'number'],
+    ].filter((entry) => entry[1]).map((entry) => entry[0]);
+    const expired = typeof p.deadline === 'number' && p.deadline <= checkedAt;
+    trace({ stage: 'token-binding-and-deadline', tokenCheckedAtMs: checkedAt,
+      tokenDeadlineMs: p.deadline, bindingMismatches, expired,
+      observedConditions: [...bindingMismatches, ...(expired ? ['deadlineExpired'] : [])] });
     if (
       p.license !== license ||
       p.product !== product ||
@@ -434,9 +460,9 @@ export class VerifierV2 {
       p.chainId !== 31337 ||
       p.contract !== this.chain.address ||
       typeof p.deadline !== 'number' ||
-      p.deadline <= Date.now()
+      p.deadline <= checkedAt
     )
-      throw new Error('TOKEN_BINDING_OR_EXPIRED');
+      { trace({ cause: bindingMismatches.length ? 'BINDING_MISMATCH' : 'TOKEN_EXPIRED' }); throw new Error('TOKEN_BINDING_OR_EXPIRED'); }
     const s = this.cached
       ? { ...(p.snapshot as SnapshotV2), rpcCalls: 0 }
       : await this.observe(license, device);
@@ -450,7 +476,8 @@ export class VerifierV2 {
       p.owner !== s.owner ||
       known > Number(p.version)
     )
-      throw new Error('TOKEN_INVALIDATED');
+      { trace({ stage: 'known-version', cause: 'RIGHTS_INVALIDATED' }); throw new Error('TOKEN_INVALIDATED'); }
+    trace({ stage: 'accepted', cause: 'ALLOW', decisionAtMs: Date.now() });
     return s;
   }
 }

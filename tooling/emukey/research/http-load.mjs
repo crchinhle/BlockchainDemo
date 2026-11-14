@@ -14,7 +14,7 @@ const config={...defaults,...input};
 for(const [key,min,max] of [['licenses',1,100000],['rate',1,400],['durationMs',1000,1800000],['warmupMs',0,300000],['cacheMs',100,120000],['tokenMs',100,120000],['concurrency',1,512],['timeoutMs',100,120000],['repetitions',1,10],['seed',1,2147483647]])if(!Number.isInteger(config[key])||config[key]<min||config[key]>max)throw new Error('INVALID_CONFIG:'+key);
 if(!['uniform','hot80'].includes(config.distribution)||!['smoke','pilot','formal'].includes(config.purpose)||!Array.isArray(config.strategies)||!config.strategies.length||config.strategies.some(s=>!defaults.strategies.includes(s)))throw new Error('INVALID_MODE');
 if(config.revokeAtMs!==null&&(!Number.isInteger(config.revokeAtMs)||config.revokeAtMs<0||config.revokeAtMs>=config.durationMs))throw new Error('INVALID_REVOKE_TIME');
-const output=resolve(root,'EmuKey/backend/.research-local/evidence/http-load-'+Date.now()+'-'+randomUUID());await mkdir(output,{recursive:true});
+const output=process.env.RESEARCH_LOAD_OUTPUT?resolve(process.env.RESEARCH_LOAD_OUTPUT):resolve(root,'EmuKey/backend/.research-local/evidence/http-load-'+Date.now()+'-'+randomUUID());await mkdir(output,{recursive:true});
 await writeFile(resolve(output,'config.json'),JSON.stringify(config,null,2),{flag:'wx'});
 const credentials=JSON.parse(await readFile(resolve(root,'EmuKey/backend/.research-local/login.json'),'utf8'));
 const base='http://127.0.0.1:3100/api/research';let cookie='';
@@ -34,15 +34,15 @@ for(const plan of order){
   session=await api('/benchmarks',{strategy:plan.strategy,licenses:config.licenses,cacheMs:config.cacheMs,tokenMs:config.tokenMs});await record({type:'manifest',...plan,session:session.id,server:session.manifest,startedAt});
   const keys=[];for(let i=0;i<config.licenses&&!interrupted;i++){const account=privateKeyToAccount(generatePrivateKey());await api(`/benchmarks/${session.id}/fixtures`,{key:account.address},120000);keys.push(account);await record({type:'fixture',index:i});}
   if(interrupted)throw new Error('INTERRUPTED');
-  const request=async(index)=>{
-   const metrics={rpcCalls:0,cacheHits:0};
-   const proof=async()=>{const c=await api(`/benchmarks/${session.id}/request`,{index,operation:'challenge'});return {nonce:c.nonce,signature:await keys[index].signMessage({message:c.message})};};
-   const issued=await api(`/benchmarks/${session.id}/request`,{index,operation:'issue',...await proof()});
+  const request=async(index,correlationId=randomUUID())=>{
+   const metrics={rpcCalls:0,cacheHits:0,httpRequests:0};
+   const proof=async()=>{metrics.httpRequests++;const c=await api(`/benchmarks/${session.id}/request`,{index,operation:'challenge',correlationId});return {nonce:c.nonce,signature:await keys[index].signMessage({message:c.message})};};
+   metrics.httpRequests++;const issued=await api(`/benchmarks/${session.id}/request`,{index,operation:'issue',correlationId,...await proof()});
    metrics.rpcCalls+=issued.metrics?.rpcCalls??0;metrics.cacheHits+=issued.metrics?.cacheHits??0;
-   if(issued.decision!=='ALLOW')return {...issued,metrics};
-   const decision=await api(`/benchmarks/${session.id}/request`,{index,operation:'verify',token:issued.token,...await proof()});
+   if(issued.decision!=='ALLOW')return {...issued,metrics,trace:{correlationId,issue:issued.metrics?.trace??null,verify:null}};
+   metrics.httpRequests++;const decision=await api(`/benchmarks/${session.id}/request`,{index,operation:'verify',correlationId,token:issued.token,...await proof()});
    metrics.rpcCalls+=decision.metrics?.rpcCalls??0;metrics.cacheHits+=decision.metrics?.cacheHits??0;
-   return {...decision,metrics};
+   return {...decision,metrics,trace:{correlationId,issue:issued.metrics?.trace??null,verify:decision.metrics?.trace??null}};
   };
   const warmStart=performance.now();let warmIndex=0;while(performance.now()-warmStart<config.warmupMs&&!interrupted){const r=await request(warmIndex++%keys.length);await record({type:'warmup',decision:r.decision,reason:r.reason,metrics:r.metrics});}
   async function metric(){try{await record({type:'resource',server:await api('/benchmark-metrics'),generator:{pid:process.pid,at:Date.now(),cpu:process.cpuUsage(),memory:process.memoryUsage()}});}catch(e){await record({type:'resource-error',reason:e.message});}}
@@ -55,12 +55,12 @@ for(const plan of order){
    if(config.revokeAtMs!==null&&!revocation&&performance.now()-start>=config.revokeAtMs){revocation=api(`/benchmarks/${session.id}/revoke`,{index:0},120000).then(result=>record({type:'revocation',result}),e=>record({type:'revocation-error',reason:e.message}));}
    const scheduledAt=startUtc+due,lagMs=Math.max(0,performance.now()-start-due),sequence=seq;
    if(tasks.size>=config.concurrency){await record({type:'sample',sequence,index,scheduledAt,lagMs,decision:'DROPPED',reason:'GENERATOR_CONCURRENCY'});continue;}
-   const task=(async()=>{const began=performance.now(),at=Date.now();try{const r=await request(index);await record({type:'sample',sequence,index,scheduledAt,lagMs,startedAt:at,endedAt:Date.now(),latencyMs:performance.now()-began,decision:r.decision,reason:r.reason,metrics:r.metrics,responseReceived:true});}catch(e){await record({type:'sample',sequence,index,scheduledAt,lagMs,startedAt:at,endedAt:Date.now(),latencyMs:performance.now()-began,decision:/Timeout|Abort/.test(e.name)?'TIMEOUT':'ERROR',reason:e.name, responseReceived:false,outcome:'unknown-if-server-completed'});}})();tasks.add(task);void task.then(()=>tasks.delete(task),()=>tasks.delete(task));
+   const task=(async()=>{const began=performance.now(),at=Date.now();try{const r=await request(index);await record({type:'sample',sequence,index,scheduledAt,lagMs,startedAt:at,endedAt:Date.now(),latencyMs:performance.now()-began,decision:r.decision,reason:r.reason,metrics:r.metrics,trace:r.trace,responseReceived:true});}catch(e){await record({type:'sample',sequence,index,scheduledAt,lagMs,startedAt:at,endedAt:Date.now(),latencyMs:performance.now()-began,decision:/Timeout|Abort/.test(e.name)?'TIMEOUT':'ERROR',reason:e.name, responseReceived:false,outcome:'unknown-if-server-completed'});}})();tasks.add(task);void task.then(()=>tasks.delete(task),()=>tasks.delete(task));
   }
   await Promise.allSettled(tasks);if(revocation)await revocation;await record({type:'end',state:interrupted?'INTERRUPTED':'COMPLETED',scheduled:count,attempted:seq,elapsedMs:performance.now()-start});
  }catch(e){await record({type:'end',state:interrupted?'INTERRUPTED':'FAILED',reason:e.message});process.exitCode=1;}
  finally{clearInterval(metricsTimer);await metricTask;if(session)await api(`/benchmarks/${session.id}/finish`,{}).catch(e=>record({type:'finish-error',reason:e.message}));await writes;await file.close();}
  console.log(plan.strategy,'repetition',plan.repetition,'recorded');
 }
-const {readdir}=await import('node:fs/promises');const checksums={};for(const file of await readdir(output))checksums[file]=createHash('sha256').update(await readFile(resolve(output,file))).digest('hex');await writeFile(resolve(output,'checksums.json'),JSON.stringify(checksums,null,2),{flag:'wx'});
+const {readdir}=await import('node:fs/promises');const checksums={};for(const file of await readdir(output)){if(file==='process.log')continue;checksums[file]=createHash('sha256').update(await readFile(resolve(output,file))).digest('hex');}await writeFile(resolve(output,'checksums.json'),JSON.stringify(checksums,null,2),{flag:'wx'});
 console.log('Evidence:',output);

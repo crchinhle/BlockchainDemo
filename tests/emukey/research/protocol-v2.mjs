@@ -19,7 +19,10 @@ try{
  const product=randomUUID(),license=randomUUID(),id=uuidToBytes16(license),p=uuidToBytes16(product);
  const deviceKey=privateKeyToAccount(generatePrivateKey()),device=deviceIdentity(license,deviceKey.address),other=req();
  const send=async(actor,operation,args)=>{const r=await chain.send(actor,operation,args);evidence.transactions.push({operation,hash:r.transactionHash,block:String(r.blockNumber),gas:String(r.gasUsed)});return r;};
- const expiry=BigInt(Math.floor(Date.now()/1000)+600);
+ // Automining can advance block time ahead of wall time during a load campaign.
+ // Keep the lifecycle fixture live on both clocks; expiry-specific cases below
+ // still deliberately test expiration against the confirmed block timestamp.
+ const expiry=BigInt(Math.max(Math.floor(Date.now()/1000),Number((await chain.rpc.getBlock()).timestamp))+600);
  await send(issuer,'registerProduct',[p,issuer]);
  await check('issuer product scope',()=>assert.rejects(send(wrong,'issue',[id,p,owner,expiry,3,true])));
  await send(issuer,'issue',[id,p,owner,expiry,3,true]);

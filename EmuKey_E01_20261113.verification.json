@@ -1,0 +1,13 @@
+{
+  "zip": "D:\\TLHT\\NCKH\\DemoBlockChain\\emukey-research-lab\\EmuKey_E01_20261113.zip",
+  "sha256": "057e2e0b68158ed2a9ab593817bfa362511e6b9e57243389e6485c376e9d497d",
+  "crc": true,
+  "checksums": true,
+  "offlineReproduction": true,
+  "counts": {
+    "hybrid": 135,
+    "direct": 45,
+    "revocation": 90
+  },
+  "verifiedAt": "2026-11-13T10:25:20.885462+00:00"
+}
